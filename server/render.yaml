@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: livesync-relay
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    disk:
+      name: livesync-data
+      mountPath: /data
+      sizeGB: 3

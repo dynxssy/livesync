@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LiveSync</title>
+<style>
+  :root {
+    --bg: #2b2b2b;          /* device background in Live's default dark theme */
+    --surface: #363636;
+    --surface-2: #424242;
+    --line: #4d4d4d;
+    --text: #d6d6d6;
+    --muted: #8e8e8e;
+    --accent: #ffa31a;      /* Live's "on" orange */
+    --accent-text: #1c1c1c;
+    --ok: #74d36f;
+    --warn: #ffd24a;
+    --bad: #ff5d52;
+    --blue: #6cc4ff;
+    --radius: 2px;
+    --font: "Ableton Sans", "Ableton Sans Medium", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 11px/1.25 var(--font); -webkit-font-smoothing: antialiased; user-select: none; overflow: hidden; }
+  body.browser { display: grid; place-items: center; background: #1e1e1e; }
+  body.browser .device { border: 1px solid #111; box-shadow: 0 8px 30px rgba(0,0,0,.45); }
+  .device { width: 100%; max-width: 560px; height: 169px; background: var(--bg); display: grid; grid-template-rows: 22px 1fr 30px; }
+  body:not(.browser) .device { max-width: none; }
+
+  header { display: flex; align-items: center; gap: 8px; padding: 0 8px; background: var(--surface); border-bottom: 1px solid #1c1c1c; white-space: nowrap; }
+  .logo { font-weight: 700; letter-spacing: .08em; font-size: 10px; display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 1px rgba(0,0,0,.4) inset; }
+  .dot.live { background: var(--ok); }
+  .dot.busy { background: var(--warn); animation: pulse 1s ease-in-out infinite; }
+  .dot.bad { background: var(--bad); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .status { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+  .spacer { flex: 1; }
+  .chip { background: #262626; border: 1px solid var(--line); border-radius: var(--radius); padding: 1px 6px; font-variant-numeric: tabular-nums; color: var(--text); }
+  .chip.code { letter-spacing: .14em; font-weight: 700; color: var(--accent); cursor: pointer; }
+  .peers { display: flex; gap: 3px; }
+  .avatar { width: 15px; height: 15px; border-radius: 50%; background: var(--blue); color: #10202c; font-size: 9px; font-weight: 700; display: grid; place-items: center; }
+
+  main { display: grid; grid-template-columns: 1fr 118px; gap: 8px; padding: 7px 8px 4px; min-height: 0; }
+  .fields { display: grid; grid-template-columns: 44px 1fr; gap: 4px 6px; align-content: start; }
+  label { color: var(--muted); font-size: 10px; align-self: center; text-transform: none; }
+  input { width: 100%; height: 18px; background: #1f1f1f; border: 1px solid var(--line); border-radius: var(--radius); color: var(--text); font: inherit; padding: 0 5px; outline: none; user-select: text; }
+  input:focus { border-color: var(--accent); }
+  input.code { letter-spacing: .14em; text-transform: uppercase; font-weight: 700; }
+  .buttons { grid-column: 1 / -1; display: flex; gap: 4px; margin-top: 2px; }
+  button { height: 20px; min-width: 56px; padding: 0 10px; border: 1px solid #1c1c1c; border-radius: var(--radius); background: var(--surface-2); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+  button:hover { background: #4d4d4d; }
+  button:active { transform: translateY(1px); }
+  button.primary { background: var(--accent); color: var(--accent-text); }
+  button.primary:hover { background: #ffb547; }
+  button.quiet { background: transparent; border-color: var(--line); color: var(--muted); }
+  button:disabled { opacity: .45; cursor: default; }
+
+  .session { display: none; grid-column: 1 / -1; align-content: start; gap: 5px; }
+  .big-code { font-size: 22px; font-weight: 700; letter-spacing: .2em; color: var(--accent); cursor: pointer; }
+  .hint { color: var(--muted); font-size: 10px; }
+  .connected .fields > :not(.session) { display: none; }
+  .connected .session { display: grid; }
+
+  .options { border-left: 1px solid #1f1f1f; padding-left: 8px; display: grid; gap: 3px; align-content: start; }
+  .options .title { color: var(--muted); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 1px; }
+  .toggle { height: 17px; display: flex; align-items: center; justify-content: center; border: 1px solid #1c1c1c; border-radius: var(--radius); background: var(--surface-2); color: var(--muted); font-size: 10px; cursor: pointer; }
+  .toggle.on { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+
+  footer { border-top: 1px solid #1f1f1f; display: flex; align-items: center; gap: 8px; padding: 0 8px; background: #262626; min-width: 0; }
+  .msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+  .msg.alert { color: var(--text); }
+  .msg.alert::before { content: "!"; display: inline-grid; place-items: center; width: 13px; height: 13px; border-radius: 50%; background: var(--warn); color: #222; font-weight: 800; font-size: 9px; margin-right: 6px; vertical-align: -2px; }
+  .bar { position: relative; flex: 0 0 38%; height: 8px; background: #1a1a1a; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; display: none; }
+  .bar > i { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--accent); transition: width .25s ease; }
+  .bar.indeterminate > i { width: 30% !important; animation: slide 1.1s ease-in-out infinite; }
+  @keyframes slide { from { left: -30%; } to { left: 100%; } }
+  footer.progress .bar { display: block; }
+  .offline-note { position: absolute; inset: 0; display: none; place-items: center; text-align: center; background: var(--bg); padding: 16px; color: var(--muted); }
+  .offline-note b { color: var(--text); display: block; margin-bottom: 4px; }
+  body.no-script .offline-note { display: grid; }
+</style>
+</head>
+<body>
+<div class="device" id="device">
+  <header>
+    <div class="logo"><span class="dot" id="dot"></span>LIVESYNC</div>
+    <div class="status" id="status">Not connected</div>
+    <div class="spacer"></div>
+    <div class="peers" id="peers"></div>
+    <div class="chip" id="latency" title="Round-trip time to the relay" hidden></div>
+    <div class="chip code" id="codeChip" title="Click to copy the session code" hidden></div>
+  </header>
+  <main>
+    <div class="fields" id="fields">
+      <label for="server">Server</label><input id="server" placeholder="wss://your-relay.example.com" spellcheck="false">
+      <label for="name">Name</label><input id="name" placeholder="Your name" maxlength="40" spellcheck="false">
+      <label for="room">Code</label><input id="room" class="code" placeholder="ABC123" maxlength="12" spellcheck="false">
+      <div class="buttons">
+        <button class="primary" id="hostBtn" title="Start a new session from this Live Set">Host</button>
+        <button id="joinBtn" title="Join your partner's session. This replaces the contents of this Live Set.">Join</button>
+      </div>
+      <div class="session">
+        <div><span class="big-code" id="bigCode" title="Click to copy"></span></div>
+        <div class="hint" id="sessionHint"></div>
+        <div class="buttons">
+          <button id="resyncBtn" title="Pull a fresh copy of the project from the host">Resync</button>
+          <button class="quiet" id="leaveBtn">Leave</button>
+        </div>
+      </div>
+    </div>
+    <div class="options">
+      <div class="title">Sync</div>
+      <div class="toggle" data-opt="sync_solo" title="Share solo buttons with your partner">Solo</div>
+      <div class="toggle" data-opt="sync_arm" title="Share record-arm buttons with your partner">Arm</div>
+      <div class="toggle" data-opt="sync_transport" title="Play and stop together">Play / Stop</div>
+      <div class="toggle" data-opt="auto_resync" title="Fix drift automatically instead of asking">Auto-fix</div>
+    </div>
+  </main>
+  <footer id="footer">
+    <div class="msg" id="msg">Host a session, or enter your partner's code and press Join.</div>
+    <div class="bar" id="bar"><i id="barFill"></i></div>
+    <button class="primary" id="actionBtn" hidden>Fix it</button>
+  </footer>
+  <div class="offline-note"><div><b>LiveSync isn't running in Live</b>Choose LiveSync as a Control Surface in Live's Preferences &rsaquo; Link, Tempo &amp; MIDI. This panel reconnects by itself.</div></div>
+</div>
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  if (window.self === window.top && !/jweb|Max/i.test(navigator.userAgent) && window.innerHeight > 260) document.body.classList.add("browser");
+
+  var STATUS = {
+    offline:      { text: "Not connected",                dot: "" },
+    connecting:   { text: "Connecting to the relay…",      dot: "busy" },
+    joining:      { text: "Joining…",                      dot: "busy" },
+    syncing:      { text: "Syncing the project…",          dot: "busy" },
+    live:         { text: "Live",                          dot: "live" },
+    reconnecting: { text: "Connection dropped. Reconnecting…", dot: "busy" },
+    out_of_sync:  { text: "Out of sync",                   dot: "bad" }
+  };
+  var lastVersion = -1, editing = {}, alertAction = "", failures = 0, lastToast = 0, toastTimer = null;
+
+  function cmd(name, args) {
+    var xhr = new XMLHttpRequest();
+    xhr.open("POST", "/cmd");
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.setRequestHeader("X-LiveSync", "1");
+    xhr.send(JSON.stringify({ cmd: name, args: args || {} }));
+    setTimeout(poll, 60);
+  }
+
+  function copyCode() {
+    var code = $("bigCode").textContent;
+    if (!code) return;
+    try { navigator.clipboard.writeText(code); } catch (e) {
+      var t = document.createElement("textarea"); t.value = code; document.body.appendChild(t); t.select();
+      try { document.execCommand("copy"); } catch (e2) {} document.body.removeChild(t);
+    }
+    showToast("Code copied. Send it to your partner.");
+  }
+
+  function showToast(text) {
+    if ($("footer").classList.contains("progress") || alertAction) return;
+    var m = $("msg"); m.className = "msg"; m.textContent = text;
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { lastVersion = -1; poll(); }, 5000);
+  }
+
+  function render(s) {
+    document.body.classList.remove("no-script");
+    var st = s.state, info = STATUS[st.status] || STATUS.offline;
+    var connected = ["live", "syncing", "joining", "out_of_sync", "reconnecting"].indexOf(st.status) >= 0 && st.room;
+    $("device").classList.toggle("connected", !!connected);
+    $("dot").className = "dot " + info.dot;
+    var statusText = info.text;
+    if (st.status === "live") statusText = st.peers.length ? "Live with " + st.peers.join(", ") : "Live. Waiting for your partner…";
+    $("status").textContent = statusText;
+
+    $("codeChip").hidden = !st.room; $("codeChip").textContent = st.room;
+    $("bigCode").textContent = st.room;
+    $("sessionHint").textContent = st.host ? "You're hosting. Send this code to your partner." : "Connected to your partner's session.";
+    $("latency").hidden = !(st.latency >= 0 && connected);
+    $("latency").textContent = st.latency + " ms";
+    $("latency").style.color = st.latency > 250 ? "var(--warn)" : "";
+    var peers = $("peers"); peers.innerHTML = "";
+    st.peers.forEach(function (n) { var a = document.createElement("div"); a.className = "avatar"; a.title = n; a.textContent = (n || "?").charAt(0).toUpperCase(); peers.appendChild(a); });
+
+    ["server", "name", "room"].forEach(function (f) { if (!editing[f] && document.activeElement !== $(f)) $(f).value = s.fields[f] || ""; });
+    Array.prototype.forEach.call(document.querySelectorAll(".toggle"), function (t) { t.classList.toggle("on", !!s.options[t.dataset.opt]); });
+
+    var footer = $("footer"), msg = $("msg"), btn = $("actionBtn");
+    alertAction = s.alert ? s.alert.action : "";
+    if (s.progress) {
+      footer.classList.add("progress");
+      msg.className = "msg"; msg.textContent = s.progress.label || "Working…";
+      $("bar").classList.toggle("indeterminate", s.progress.value <= 0);
+      $("barFill").style.width = Math.round(s.progress.value * 100) + "%";
+    } else {
+      footer.classList.remove("progress");
+    }
+    if (s.alert) {
+      msg.className = "msg alert"; msg.textContent = s.alert.text; msg.title = s.alert.text;
+      btn.hidden = !s.alert.action;
+      btn.textContent = { resync: "Fix it", retry: "Retry now", dismiss: "OK" }[s.alert.action] || "OK";
+    } else {
+      btn.hidden = true; msg.title = "";
+      if (!s.progress) {
+        var t = s.toasts.length ? s.toasts[s.toasts.length - 1] : null;
+        msg.className = "msg";
+        if (t && t.id !== lastToast) { lastToast = t.id; msg.textContent = t.text; }
+        else if (!t) msg.textContent = connected ? (st.backlog > 20 ? "Catching up…" : "All changes are synced.") : "Host a session, or enter your partner's code and press Join.";
+      }
+    }
+    $("resyncBtn").disabled = st.status === "syncing";
+  }
+
+  function poll() {
+    var xhr = new XMLHttpRequest();
+    xhr.open("GET", "/state?_=" + Date.now());
+    xhr.timeout = 1500;
+    xhr.onload = function () { failures = 0; try { var s = JSON.parse(xhr.responseText); if (s.v !== lastVersion || s.toasts.length) { lastVersion = s.v; render(s); } } catch (e) {} };
+    xhr.onerror = xhr.ontimeout = function () { if (++failures > 3) document.body.classList.add("no-script"); };
+    xhr.send();
+  }
+
+  function field(f) { return $(f).value.trim(); }
+  function saveFields() { cmd("fields", { server: field("server"), name: field("name"), room: field("room").toUpperCase() }); }
+  ["server", "name", "room"].forEach(function (f) {
+    $(f).addEventListener("input", function () { editing[f] = true; });
+    $(f).addEventListener("change", function () { editing[f] = false; saveFields(); });
+    $(f).addEventListener("keydown", function (e) { if (e.key === "Enter") { editing[f] = false; saveFields(); if (f === "room" && field("room")) cmd("join", { room: field("room") }); } });
+  });
+  $("hostBtn").onclick = function () { saveFields(); cmd("host"); };
+  $("joinBtn").onclick = function () {
+    saveFields();
+    if (!field("room")) { $("room").focus(); showToast("Type the code your partner sent you."); return; }
+    cmd("join", { room: field("room") });
+  };
+  $("resyncBtn").onclick = function () { cmd("resync"); };
+  $("leaveBtn").onclick = function () { cmd("leave"); };
+  $("actionBtn").onclick = function () { cmd(alertAction === "resync" ? "resync" : alertAction === "retry" ? "retry" : "dismiss"); };
+  $("bigCode").onclick = $("codeChip").onclick = copyCode;
+  Array.prototype.forEach.call(document.querySelectorAll(".toggle"), function (t) {
+    t.onclick = function () { cmd("option", { key: t.dataset.opt, value: !t.classList.contains("on") }); };
+  });
+
+  poll();
+  setInterval(poll, 300);
+})();
+</script>
+</body>
+</html>

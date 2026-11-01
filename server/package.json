@@ -1,0 +1,17 @@
+{
+  "name": "livesync-relay",
+  "version": "0.1.0",
+  "description": "LiveSync relay server: connects Ableton Live collaborators across networks",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "cd .. && python3 -m unittest discover -s tests -v"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.22.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
