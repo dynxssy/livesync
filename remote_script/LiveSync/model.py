@@ -42,6 +42,24 @@ def r6(x):
     return round(float(x), 6)
 
 
+def has(obj, name):
+    """hasattr() that is safe with Live objects: Live raises RuntimeError (not
+    AttributeError) for properties that don't apply, e.g. arrangement_clips on
+    the master, return and group tracks."""
+    try:
+        getattr(obj, name)
+        return True
+    except Exception:
+        return False
+
+
+def get(obj, name, default=None):
+    try:
+        return getattr(obj, name)
+    except Exception:
+        return default
+
+
 class Unsupported(Exception):
     """Raised when this Live version can't perform an action remotely."""
 
@@ -74,7 +92,7 @@ SONG_PROPS = [
 def read_song(song, settings):
     out = {}
     for name, conv in SONG_PROPS:
-        if hasattr(song, name):
+        if has(song, name):
             try:
                 out[name] = conv(getattr(song, name))
             except Exception:
@@ -87,7 +105,7 @@ def read_song(song, settings):
 def write_song(song, props):
     # loop_start/loop_length must be applied in an order Live accepts.
     for name, conv in SONG_PROPS:
-        if name in props and hasattr(song, name) and name not in ("loop_start", "loop_length"):
+        if name in props and has(song, name) and name not in ("loop_start", "loop_length"):
             _set_if_diff(song, name, conv(props[name]))
     if "loop_start" in props or "loop_length" in props:
         start = props.get("loop_start", song.loop_start)
@@ -123,9 +141,9 @@ def _set_if_diff(obj, name, value):
 # ---------------------------------------------------------------------------
 
 def track_kind(track):
-    if getattr(track, "is_foldable", False):
+    if get(track, "is_foldable", False):
         return "group"
-    if getattr(track, "has_midi_input", False):
+    if get(track, "has_midi_input", False):
         return "midi"
     return "audio"
 
@@ -134,29 +152,29 @@ def read_track(track, settings, is_master=False):
     out = {"kind": "master" if is_master else track_kind(track)}
     if not is_master:
         out["name"] = track.name
-        out["color"] = int(getattr(track, "color", 0))
+        out["color"] = int(get(track, "color", 0))
         for prop in ("mute", "solo"):
             if prop == "solo" and not settings.get("sync_solo", True):
                 continue
-            if hasattr(track, prop):
+            if has(track, prop):
                 out[prop] = bool(getattr(track, prop))
-        if settings.get("sync_arm") and getattr(track, "can_be_armed", False):
+        if settings.get("sync_arm") and get(track, "can_be_armed", False):
             out["arm"] = bool(track.arm)
-        if hasattr(track, "current_monitoring_state") and out["kind"] != "group":
+        if has(track, "current_monitoring_state") and out["kind"] != "group":
             try:
                 out["monitor"] = int(track.current_monitoring_state)
             except Exception:
                 pass
-        if getattr(track, "is_grouped", False) and hasattr(track, "fold_state"):
+        if get(track, "is_grouped", False) and has(track, "fold_state"):
             pass
-        if hasattr(track, "fold_state") and out["kind"] == "group":
+        if has(track, "fold_state") and out["kind"] == "group":
             out["fold"] = int(track.fold_state)
     mixer = track.mixer_device
     out["volume"] = r4(mixer.volume.value)
     out["pan"] = r4(mixer.panning.value)
     if not is_master:
         out["sends"] = [r4(s.value) for s in mixer.sends]
-    if hasattr(mixer, "crossfade_assign") and not is_master:
+    if has(mixer, "crossfade_assign") and not is_master:
         try:
             out["xfade"] = int(mixer.crossfade_assign)
         except Exception:
@@ -167,17 +185,17 @@ def read_track(track, settings, is_master=False):
 def write_track(track, props):
     mixer = track.mixer_device
     for prop in ("name", "color", "mute", "solo", "arm"):
-        if prop in props and hasattr(track, prop):
+        if prop in props and has(track, prop):
             try:
                 _set_if_diff(track, prop, props[prop])
             except Exception:
                 pass  # e.g. arm on a track that can't be armed
-    if "monitor" in props and hasattr(track, "current_monitoring_state"):
+    if "monitor" in props and has(track, "current_monitoring_state"):
         try:
             _set_if_diff(track, "current_monitoring_state", int(props["monitor"]))
         except Exception:
             pass
-    if "fold" in props and hasattr(track, "fold_state"):
+    if "fold" in props and has(track, "fold_state"):
         try:
             _set_if_diff(track, "fold_state", int(props["fold"]))
         except Exception:
@@ -196,7 +214,7 @@ def write_track(track, props):
         for i, v in items:
             if i < len(sends):
                 _set_param(sends[i], v)
-    if "xfade" in props and hasattr(mixer, "crossfade_assign"):
+    if "xfade" in props and has(mixer, "crossfade_assign"):
         try:
             _set_if_diff(mixer, "crossfade_assign", int(props["xfade"]))
         except Exception:
@@ -214,22 +232,22 @@ def _set_param(param, value):
 
 
 def read_scene(scene):
-    out = {"name": scene.name, "color": int(getattr(scene, "color", 0))}
-    if hasattr(scene, "tempo"):
+    out = {"name": scene.name, "color": int(get(scene, "color", 0))}
+    if has(scene, "tempo"):
         out["tempo"] = r4(scene.tempo)
-        if hasattr(scene, "tempo_enabled"):
+        if has(scene, "tempo_enabled"):
             out["tempo_on"] = bool(scene.tempo_enabled)
     return out
 
 
 def write_scene(scene, props):
     for prop in ("name", "color", "tempo"):
-        if prop in props and hasattr(scene, prop):
+        if prop in props and has(scene, prop):
             try:
                 _set_if_diff(scene, prop, props[prop])
             except Exception:
                 pass
-    if "tempo_on" in props and hasattr(scene, "tempo_enabled"):
+    if "tempo_on" in props and has(scene, "tempo_enabled"):
         try:
             _set_if_diff(scene, "tempo_enabled", bool(props["tempo_on"]))
         except Exception:
@@ -249,8 +267,8 @@ def syncable_devices(track):
 
 def device_signature(device):
     cls = str(device.class_name)
-    display = str(getattr(device, "class_display_name", "") or cls)
-    sig = {"cls": cls, "name": str(device.name), "type": int(getattr(device, "type", 0))}
+    display = str(get(device, "class_display_name", "") or cls)
+    sig = {"cls": cls, "name": str(device.name), "type": int(get(device, "type", 0))}
     if cls in PLUGIN_CLASSES:
         sig["plugin"] = str(device.name)
     else:
@@ -280,7 +298,7 @@ def write_params(device, values):
     for i, v in items:
         if i < len(params):
             p = params[i]
-            if getattr(p, "is_enabled", True):
+            if get(p, "is_enabled", True):
                 _set_param(p, v)
 
 
@@ -313,7 +331,7 @@ class DeviceLoader(object):
                 if item.is_loadable:
                     index.setdefault((attr, name.lower()), item)
                     index.setdefault((attr, base.lower()), item)
-                if d < depth and getattr(item, "is_folder", True):
+                if d < depth and get(item, "is_folder", True):
                     try:
                         stack.extend((c, d + 1) for c in item.children)
                     except Exception:
@@ -336,7 +354,7 @@ class DeviceLoader(object):
 
     def load(self, track, sig):
         # Live 12.1+ can insert native devices directly by name.
-        if hasattr(track, "insert_device") and sig.get("cls") not in PLUGIN_CLASSES and not sig.get("cls", "").startswith("Mx"):
+        if has(track, "insert_device") and sig.get("cls") not in PLUGIN_CLASSES and not sig.get("cls", "").startswith("Mx"):
             try:
                 track.insert_device(sig.get("display") or sig.get("name"), len(list(track.devices)))
                 return
@@ -400,7 +418,7 @@ AUDIO_PROPS = [("gain", r4), ("pitch_coarse", int), ("pitch_fine", r4), ("warpin
 
 
 def read_notes(clip):
-    if hasattr(clip, "get_all_notes_extended"):
+    if has(clip, "get_all_notes_extended"):
         notes = clip.get_all_notes_extended()
     else:
         notes = clip.get_notes_extended(0, 128, -NOTE_SPAN, 2 * NOTE_SPAN)
@@ -408,8 +426,8 @@ def read_notes(clip):
     for n in notes:
         out.append([
             int(n.pitch), r6(n.start_time), r6(n.duration), r4(n.velocity), 1 if n.mute else 0,
-            r4(getattr(n, "probability", 1.0)), r4(getattr(n, "velocity_deviation", 0.0)),
-            r4(getattr(n, "release_velocity", 64.0)),
+            r4(get(n, "probability", 1.0)), r4(get(n, "velocity_deviation", 0.0)),
+            r4(get(n, "release_velocity", 64.0)),
         ])
     out.sort()
     return out
@@ -418,11 +436,11 @@ def read_notes(clip):
 def write_notes(clip, notes, live_api):
     if read_notes(clip) == notes:
         return
-    existing = clip.get_all_notes_extended() if hasattr(clip, "get_all_notes_extended") else clip.get_notes_extended(0, 128, -NOTE_SPAN, 2 * NOTE_SPAN)
-    ids = [n.note_id for n in existing if hasattr(n, "note_id")]
+    existing = clip.get_all_notes_extended() if has(clip, "get_all_notes_extended") else clip.get_notes_extended(0, 128, -NOTE_SPAN, 2 * NOTE_SPAN)
+    ids = [n.note_id for n in existing if has(n, "note_id")]
     if not existing:
         pass
-    elif ids and hasattr(clip, "remove_notes_by_id"):
+    elif ids and has(clip, "remove_notes_by_id"):
         clip.remove_notes_by_id(ids)
     else:
         clip.remove_notes_extended(0, 128, -NOTE_SPAN, 2 * NOTE_SPAN)
@@ -439,7 +457,7 @@ def read_clip(clip, files):
     """files: FileStore used to fingerprint audio. Returns None while a hash is pending."""
     out = {"midi": bool(clip.is_midi_clip)}
     for name, conv in CLIP_PROPS:
-        if hasattr(clip, name):
+        if has(clip, name):
             try:
                 out[name] = conv(getattr(clip, name))
             except Exception:
@@ -451,7 +469,7 @@ def read_clip(clip, files):
         out["notes"] = read_notes(clip)
     else:
         for name, conv in AUDIO_PROPS:
-            if hasattr(clip, name):
+            if has(clip, name):
                 try:
                     out[name] = conv(getattr(clip, name))
                 except Exception:
@@ -460,7 +478,7 @@ def read_clip(clip, files):
         if info is None:
             return None  # still hashing; try again shortly
         out["file"] = info
-        if hasattr(clip, "warp_markers"):
+        if has(clip, "warp_markers"):
             try:
                 out["warp"] = [[r6(m.beat_time), r6(m.sample_time)] for m in clip.warp_markers]
             except Exception:
@@ -470,7 +488,7 @@ def read_clip(clip, files):
 
 def write_clip_props(clip, props, live_api):
     for name, conv in CLIP_PROPS + AUDIO_PROPS:
-        if name in props and hasattr(clip, name):
+        if name in props and has(clip, name):
             try:
                 _set_if_diff(clip, name, conv(props[name]))
             except Exception:
@@ -478,7 +496,7 @@ def write_clip_props(clip, props, live_api):
     _write_markers(clip, props)
     if "notes" in props and clip.is_midi_clip:
         write_notes(clip, props["notes"], live_api)
-    if "warp" in props and hasattr(clip, "warp_markers") and hasattr(clip, "add_warp_marker"):
+    if "warp" in props and has(clip, "warp_markers") and has(clip, "add_warp_marker"):
         try:
             cur = [[r6(m.beat_time), r6(m.sample_time)] for m in clip.warp_markers]
             if cur != props["warp"]:
@@ -529,7 +547,7 @@ def automatable_params(track):
 
 
 def read_envelopes(clip, track):
-    if not hasattr(clip, "automation_envelope"):
+    if not has(clip, "automation_envelope"):
         return {}
     start, end = float(clip.loop_start), float(clip.loop_end)
     steps = int(min(4096, max(1, (end - start) / ENVELOPE_STEP)))
@@ -557,7 +575,7 @@ def _rle(values):
 
 
 def write_envelopes(clip, track, envs):
-    if not hasattr(clip, "automation_envelope"):
+    if not has(clip, "automation_envelope"):
         raise Unsupported("clip automation")
     params = dict(automatable_params(track))
     current = read_envelopes(clip, track)
@@ -587,12 +605,12 @@ def write_envelopes(clip, track, envs):
 # ---------------------------------------------------------------------------
 
 def read_arrangement(track, files):
-    clips = getattr(track, "arrangement_clips", None)
+    clips = get(track, "arrangement_clips", None)
     if clips is None:
-        return None
+        return []  # master/return/group tracks have no arrangement clips
     out = []
     for clip in clips:
-        if getattr(clip, "is_recording", False):
+        if get(clip, "is_recording", False):
             return None  # wait until the take is finished
         st = read_clip(clip, files)
         if st is None:
@@ -614,7 +632,7 @@ def _arr_identity(st):
 def write_arrangement(track, target, files, live_api):
     """Reconcile arrangement clips. Clips can't be moved through the API, so a
     moved clip is deleted and re-created at its new position."""
-    if not hasattr(track, "arrangement_clips"):
+    if not has(track, "arrangement_clips"):
         raise Unsupported("arrangement clips")
     current = list(track.arrangement_clips)
     cur_states = []
@@ -634,17 +652,17 @@ def write_arrangement(track, target, files, live_api):
             wanted.remove(hit)
             matched.append((c, hit))
         else:
-            if not hasattr(track, "delete_clip"):
+            if not has(track, "delete_clip"):
                 raise Unsupported("deleting arrangement clips")
             track.delete_clip(c)
     for w in wanted:
         length = w["end"] - w["start"]
         if w["midi"]:
-            if not hasattr(track, "create_midi_clip"):
+            if not has(track, "create_midi_clip"):
                 raise Unsupported("creating arrangement MIDI clips (needs Live 12.2+)")
             clip = track.create_midi_clip(w["start"], length)
         else:
-            if not hasattr(track, "create_audio_clip"):
+            if not has(track, "create_audio_clip"):
                 raise Unsupported("creating arrangement audio clips (needs Live 12.2+)")
             path = files.path_for(w["file"]["hash"])
             if path is None:
@@ -671,7 +689,7 @@ def create_session_clip(slot, state, files):
     if state["midi"]:
         slot.create_clip(max(0.25, float(state.get("length") or state.get("loop_end", 4.0))))
     else:
-        if not hasattr(slot, "create_audio_clip"):
+        if not has(slot, "create_audio_clip"):
             raise Unsupported("creating audio clips (needs Live 12)")
         path = files.path_for(state["file"]["hash"])
         if path is None:

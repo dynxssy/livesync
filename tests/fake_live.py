@@ -21,6 +21,8 @@ class Observable(object):
         object.__setattr__(self, "_live_ptr", next(_ptrs))
 
     def __getattr__(self, name):
+        if name == "arrangement_clips" and self.__dict__.get("_no_arrangement"):
+            raise RuntimeError("Main, Group and Return Tracks have no arrangement clips")
         if name.startswith("add_") and name.endswith("_listener"):
             prop = name[4:-9]
             return lambda fn: self._listeners.setdefault(prop, []).append(fn)
@@ -249,9 +251,11 @@ class Track(Observable):
         self.solo = False
         self.arm = False
         self.mixer_device = Mixer(0 if master else n_sends)
+        self._no_arrangement = master
         self.devices = []
         self.clip_slots = [] if master else [ClipSlot(self) for _ in range(n_scenes)]
-        self.arrangement_clips = []
+        if not master:  # real Live raises RuntimeError on master/return/group
+            self.arrangement_clips = []
 
     def delete_device(self, index):
         self.devices = self.devices[:index] + self.devices[index + 1:]
@@ -341,6 +345,8 @@ class Song(Observable):
 
     def create_return_track(self):
         t = Track(self, "audio", 0, 0)
+        t._no_arrangement = True
+        t.__dict__.pop("arrangement_clips", None)
         t.name = "%s-Return" % "ABCDEFGH"[len(self.return_tracks)]
         self.return_tracks = self.return_tracks + [t]
         for tr in self.tracks + self.return_tracks:

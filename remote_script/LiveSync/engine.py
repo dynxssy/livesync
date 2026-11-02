@@ -25,7 +25,7 @@ import time
 import traceback
 
 from . import model
-from .model import MissingItem, Unsupported
+from .model import MissingItem, Unsupported, get, has
 from .settings import SESSION_OPTIONS
 
 PROTOCOL_VERSION = 1
@@ -813,7 +813,7 @@ class Engine(object):
             if not slot.has_clip:
                 return None
             clip = slot.clip
-            if getattr(clip, "is_recording", False):
+            if get(clip, "is_recording", False):
                 return PENDING
             st = model.read_clip(clip, self.files)
             return PENDING if st is None else st
@@ -880,7 +880,7 @@ class Engine(object):
     def _detail_clip_key(self):
         try:
             clip = self.song.view.detail_clip
-            if clip is None or not hasattr(clip, "canonical_parent"):
+            if clip is None or not has(clip, "canonical_parent"):
                 return None
             slot = clip.canonical_parent
             track = slot.canonical_parent
@@ -1119,7 +1119,7 @@ class Engine(object):
 # ---------------------------------------------------------------------------
 
 def _ptr(obj):
-    p = getattr(obj, "_live_ptr", None)
+    p = get(obj, "_live_ptr", None)
     return p if p is not None else id(obj)
 
 
@@ -1200,7 +1200,7 @@ class Listeners(object):
         return group in self.groups
 
     def _add(self, group, obj, prop, fn):
-        adder = getattr(obj, "add_%s_listener" % prop, None)
+        adder = get(obj, "add_%s_listener" % prop, None)
         if adder is None:
             return
         try:
@@ -1247,9 +1247,9 @@ class Listeners(object):
             pkey = "p:%s:%d" % (uid, i)
             for p in dev.parameters:
                 self._add(uid, p, "value", (lambda k: lambda: dirty.add(k))(pkey))
-        if hasattr(track, "arrangement_clips"):
+        if has(track, "arrangement_clips"):
             self._add(uid, track, "arrangement_clips", lambda: dirty.add("a:" + uid))
-        for slot in getattr(track, "clip_slots", []):
+        for slot in get(track, "clip_slots", []):
             self.bind_clip(track, slot, group=uid)
 
     def bind_clip(self, track, slot, group=None):
