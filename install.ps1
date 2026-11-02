@@ -42,6 +42,22 @@ if (Test-Path $RS) { Remove-Item $RS -Recurse -Force }
 New-Item -ItemType Directory -Force -Path (Join-Path $UL "Presets\Audio Effects\Max Audio Effect") | Out-Null
 Copy-Item (Join-Path $Src.FullName "remote_script\LiveSync") $RS -Recurse
 Copy-Item (Join-Path $Src.FullName "m4l\LiveSync.amxd") (Join-Path $UL "Presets\Audio Effects\Max Audio Effect\LiveSync.amxd") -Force
+# Some Live installs don't scan the User Library (e.g. it's "(not set)" in Settings > Library).
+# If Live is running, also put LiveSync in Live's own MIDI Remote Scripts folder, which it always reads.
+$live = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'Ableton Live*' -and $_.Path } | Select-Object -First 1
+if ($live) {
+  $mrs = Join-Path (Split-Path (Split-Path $live.Path)) 'Resources\MIDI Remote Scripts'
+  if (Test-Path $mrs) {
+    try {
+      $dst = Join-Path $mrs 'LiveSync'
+      if (Test-Path $dst) { Remove-Item $dst -Recurse -Force -ErrorAction Stop }
+      Copy-Item $RS $dst -Recurse -ErrorAction Stop
+      Write-Host "Also installed into Live's own folder: $mrs"
+    } catch {
+      Write-Host "Couldn't write to $mrs. Run this from an Administrator command prompt to install there too."
+    }
+  }
+}
 # Same folder LiveSync's Python uses: %USERPROFILE%\Documents\LiveSync (not the OneDrive-redirected one).
 $DocsRoot = Join-Path $env:USERPROFILE "Documents"
 if (-not (Test-Path $DocsRoot)) { $DocsRoot = $env:USERPROFILE }
