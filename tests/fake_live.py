@@ -77,7 +77,8 @@ DEVICE_PARAMS = {
     "OriginalSimpler": ["Device On", "Volume", "Transpose", "Filter Freq"],
     "PluginDevice": ["Device On", "Cutoff", "Resonance", "Drive"],
 }
-DISPLAY = {"Eq8": "EQ Eight", "Compressor2": "Compressor", "OriginalSimpler": "Simpler"}
+DISPLAY = {"Eq8": "EQ Eight", "Compressor2": "Compressor", "OriginalSimpler": "Simpler", "DrumGroupDevice": "Drum Rack"}
+CLASS_BY_DISPLAY = dict((v, k) for k, v in DISPLAY.items())
 
 
 class Device(Observable):
@@ -90,6 +91,68 @@ class Device(Observable):
         self.name = name or self.class_display_name
         self.type = 1 if class_name in ("OriginalSimpler",) else 2
         self.parameters = [Param(n, 1.0 if i == 0 else 0.5) for i, n in enumerate(DEVICE_PARAMS.get(class_name, ["Device On"]))]
+        if class_name == "OriginalSimpler":
+            self.sample = Sample("")
+        if class_name == "DrumGroupDevice":
+            self.can_have_chains = True
+            self.can_have_drum_pads = True
+            self.chains = []
+            self.drum_pads = [DrumPad(self, n) for n in range(128)]
+
+    # Simpler (Live 12)
+    def replace_sample(self, path):
+        self.sample = Sample(path)
+
+    # Drum Rack (Live 12.3: insert_chain + settable DrumChain.in_note)
+    def insert_chain(self, index):
+        self.chains.insert(index, Chain(self))
+
+
+class Sample(object):
+    def __init__(self, path):
+        self.file_path = path
+
+
+class Chain(object):
+    """A rack chain. In a Drum Rack, setting in_note puts it on that pad."""
+    def __init__(self, rack, name="Chain"):
+        self.rack = rack
+        self.name = name
+        self.devices = []
+        self._in_note = None
+
+    @property
+    def in_note(self):
+        return self._in_note
+
+    @in_note.setter
+    def in_note(self, note):
+        for pad in self.rack.drum_pads:
+            if self in pad.chains:
+                pad.chains.remove(self)
+        self._in_note = note
+        self.rack.drum_pads[note].chains.append(self)
+
+    def insert_device(self, display_name, index):
+        if display_name not in CLASS_BY_DISPLAY:
+            raise RuntimeError("unknown device %s" % display_name)
+        self.devices = self.devices[:index] + [Device(CLASS_BY_DISPLAY[display_name])] + self.devices[index:]
+
+    def delete_device(self, index):
+        self.devices = self.devices[:index] + self.devices[index + 1:]
+
+
+class DrumPad(object):
+    def __init__(self, rack, note):
+        self.rack = rack
+        self.note = note
+        self.name = "Pad %d" % note
+        self.chains = []
+
+    def delete_all_chains(self):
+        for c in list(self.chains):
+            self.rack.chains.remove(c)
+        self.chains = []
 
 
 class MidiNote(object):
@@ -403,7 +466,7 @@ class Browser(object):
             BrowserItem("Compressor", lambda: Device("Compressor2")),
         ])
         self.midi_effects = BrowserItem("MIDI Effects")
-        self.drums = BrowserItem("Drums")
+        self.drums = BrowserItem("Drums", children=[BrowserItem("Drum Rack", lambda: Device("DrumGroupDevice"))])
         self.max_for_live = BrowserItem("M4L")
         self.plugins = BrowserItem("Plug-ins", children=[
             BrowserItem("VST3", children=[BrowserItem(p, (lambda p=p: Device("PluginDevice", p))) for p in plugins])])

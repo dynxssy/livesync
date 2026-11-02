@@ -322,6 +322,7 @@ class Engine(object):
         if not self.is_host:
             return
         state = self.full_state(include_envelopes=True)
+        self._share_files(state)  # audio and drum samples already in the set when hosting
         self.net.send({"t": "snapshot", "for": msg.get("for"), "seq": self.seq, "state": state})
 
     def _on_snapshot_none(self, msg):
@@ -498,6 +499,7 @@ class Engine(object):
 
     def _apply_one(self, op):
         key = op["k"]
+        loads_devices = key.startswith("d:") and _chain_identity(self.shadow.get(key)) != _chain_identity(op.get("v"))
         try:
             self._apply_key(key, op)
         except MissingItem as e:
@@ -508,7 +510,9 @@ class Engine(object):
             self._internal_error("apply %s" % key, sync_problem=True)
         # Re-read what Live actually did so it doesn't echo back.
         self._silent_read(key)
-        if key.startswith("d:"):
+        if loads_devices:
+            # Live loads devices asynchronously; don't echo the in-between states.
+            # (Pad samples and knob moves inside a rack apply instantly, so no wait.)
             self.settle[key] = self.clock() + SETTLE_SECONDS
 
     def _silent_read(self, key):
@@ -564,9 +568,16 @@ class Engine(object):
         elif kind == "s":
             model.write_scene(obj, op.get("m") or op.get("v") or {})
         elif kind == "d":
-            missing = model.write_device_chain(obj, op["v"], self.loader)
+            value = op["v"]
+            for info in _iter_files(value):
+                if self._need_file(info, key, op):
+                    return  # re-applied once the drum samples have downloaded
+            issues = []
+            missing = model.write_device_chain(obj, value, self.loader, self.files, issues)
             for m in missing:
                 self._note_missing(m)
+            for what in issues:
+                self._note_unsupported(what)
             self.listeners.bind_track(parts[0], obj)
         elif kind == "p":
             devices = model.syncable_devices(obj)
@@ -801,7 +812,8 @@ class Engine(object):
         if kind == "s":
             return model.read_scene(obj)
         if kind == "d":
-            return model.read_device_chain(obj)
+            st = model.read_device_chain(obj, self.files)
+            return PENDING if st is None else st
         if kind == "p":
             devices = model.syncable_devices(obj)
             idx = int(parts[1])
@@ -855,7 +867,7 @@ class Engine(object):
         now = self.clock()
         if "__rescan_audio__" in self.dirty:
             self.dirty.discard("__rescan_audio__")
-            self.dirty.update(k for k in self.all_keys() if k[:2] in ("c:", "a:"))
+            self.dirty.update(k for k in self.all_keys() if k[:2] in ("c:", "a:", "d:"))
         for key in STRUCTURE_KEYS:
             self._scan_key(key, batch, now)
         # Envelopes are only polled on the clip you're looking at.
@@ -913,7 +925,7 @@ class Engine(object):
             uid = key[2:]
             self.listeners.bind_track(uid, self.objs.get(uid))
             self.dirty.update(k for k in self._track_keys(uid) if k.startswith("p:"))
-        if key[:2] in ("c:", "a:"):
+        if key[:2] in ("c:", "a:", "d:"):
             self._share_files(cur)
         return True
 
@@ -1154,17 +1166,28 @@ def _make_op(key, old, cur):
     return {"k": key, "v": cur}
 
 
+def _chain_identity(chain):
+    if not isinstance(chain, list):
+        return None
+    return [(d.get("cls"), d.get("display"), d.get("plugin")) for d in chain if isinstance(d, dict)]
+
+
 def _iter_files(value):
+    """Every {"hash",...} file reference anywhere in a value (clips, arrangement
+    clips, and samples nested inside Simplers / Drum Rack pads)."""
     if isinstance(value, dict):
         f = value.get("file")
         if isinstance(f, dict) and f.get("hash"):
             yield f
+        for k, v in value.items():
+            if k != "file" and isinstance(v, (dict, list)):
+                for x in _iter_files(v):
+                    yield x
     elif isinstance(value, list):
         for v in value:
-            if isinstance(v, dict):
-                f = v.get("file")
-                if isinstance(f, dict) and f.get("hash"):
-                    yield f
+            if isinstance(v, (dict, list)):
+                for x in _iter_files(v):
+                    yield x
 
 
 def _describe(key, value):

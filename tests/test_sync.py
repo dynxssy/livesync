@@ -246,6 +246,62 @@ class SyncTest(unittest.TestCase):
         # Alice keeps her plugin: the failure on Bob's side must not delete it.
         self.assertEqual([d.name for d in track.devices], ["Serum"])
 
+    def _drum_kit(self, peer, sample_path):
+        """Drum Rack with an 808 Simpler on C1, like a kit dragged in from the browser."""
+        track = peer.song.tracks[0]
+        peer.song.view.selected_track = track
+        peer.browser.load_item(peer.browser.drums.children[0])
+        rack = track.devices[-1]
+        rack.name = "My 808 Kit"
+        rack.insert_chain(0)
+        chain = rack.chains[0]
+        chain.in_note = 36
+        chain.insert_device("Simpler", 0)
+        chain.devices[0].replace_sample(sample_path)
+        return rack
+
+    def test_drum_rack_samples_are_shared(self):
+        path = os.path.join(self.tmp, "808 %s.wav" % self.id().split(".")[-1])
+        with open(path, "wb") as f:
+            f.write(os.urandom(300000))
+        rack = self._drum_kit(self.a, path)
+        btrack = self.b.song.tracks[0]
+
+        def pad_sample():
+            if not btrack.devices or btrack.devices[-1].class_name != "DrumGroupDevice":
+                return None
+            chains = btrack.devices[-1].drum_pads[36].chains
+            if not chains or not chains[0].devices:
+                return None
+            return chains[0].devices[0].sample.file_path
+        self.run_until(lambda: pad_sample(), timeout=15)
+        self.assertEqual(btrack.devices[-1].name, "My 808 Kit")
+        with open(path, "rb") as f1, open(pad_sample(), "rb") as f2:
+            self.assertEqual(f1.read(), f2.read())
+        # Tweaking the 808 inside the pad syncs too.
+        rack.drum_pads[36].chains[0].devices[0].parameters[1].value = 0.25
+        self.run_until(lambda: btrack.devices[-1].drum_pads[36].chains[0].devices[0].parameters[1].value == 0.25)
+        # Clearing the pad on Bob's side clears it for Alice.
+        self.settle(1.6)  # Bob's Live is still finishing loading the kit
+        btrack.devices[-1].drum_pads[36].delete_all_chains()
+        self.run_until(lambda: not rack.drum_pads[36].chains)
+        self.assertConverged()
+        self.assertFalse(self.a.ui.toasts and any("can't sync" in t for t in self.a.ui.toasts))
+
+    def test_drum_kit_in_set_before_join_is_shared(self):
+        path = os.path.join(self.tmp, "early808.wav")
+        with open(path, "wb") as f:
+            f.write(os.urandom(200000))
+        self.b.engine.leave()
+        self._drum_kit(self.a, path)
+        self.settle(0.5)
+        self.b = Peer("carol-early", self.tmp, self.url)
+        self.b.engine.join(self.a.engine.room)
+        self.run_until(lambda: self.b.engine.phase == "live" and self.b.engine.snapshot_job is None, timeout=15)
+        chains = self.b.song.tracks[0].devices[-1].drum_pads[36].chains
+        self.assertTrue(chains and chains[0].devices[0].sample.file_path)
+        self.assertConverged()
+
     def test_audio_file_is_shared(self):
         path = os.path.join(self.tmp, "kick %s.wav" % self.id().split(".")[-1])
         with open(path, "wb") as f:

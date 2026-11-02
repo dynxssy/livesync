@@ -265,7 +265,18 @@ def syncable_devices(track):
     return [d for d in track.devices if not str(d.name).startswith(IGNORED_DEVICE_PREFIXES)]
 
 
-def device_signature(device):
+SIMPLER_CLASSES = ("OriginalSimpler",)
+MAX_RACK_DEPTH = 3  # racks inside racks inside racks
+
+
+class _HashPending(Exception):
+    pass
+
+
+def device_signature(device, files=None, depth=0):
+    """Describe a device. With `files`, also describe what's *inside* it: the
+    sample in a Simpler, and the pads/chains of a Drum Rack or other Rack, so a
+    kit arrives with its sounds instead of as an empty rack."""
     cls = str(device.class_name)
     display = str(get(device, "class_display_name", "") or cls)
     sig = {"cls": cls, "name": str(device.name), "type": int(get(device, "type", 0))}
@@ -274,7 +285,46 @@ def device_signature(device):
     else:
         sig["display"] = display
     sig["n"] = len(device.parameters)
+    if files is not None:
+        _add_content(sig, device, files, depth)
     return sig
+
+
+def _sample_path(device):
+    sample = get(device, "sample", None)
+    if sample is None:
+        return ""
+    return str(get(sample, "file_path", "") or "")
+
+
+def _add_content(sig, device, files, depth):
+    if sig["cls"] in SIMPLER_CLASSES:
+        path = _sample_path(device)
+        if path:
+            info = files.fingerprint(path)
+            if info is None:
+                raise _HashPending()
+            sig["file"] = {"hash": info.get("hash", ""), "name": info.get("name", ""), "size": info.get("size", 0)}
+    if depth >= MAX_RACK_DEPTH:
+        return
+    if get(device, "can_have_drum_pads", False):
+        pads = []
+        for pad in get(device, "drum_pads", None) or []:
+            chains = list(get(pad, "chains", None) or [])
+            if chains:
+                pads.append([int(pad.note), [_chain_sig(c, files, depth + 1) for c in chains]])
+        sig["pads"] = pads
+    elif get(device, "can_have_chains", False):
+        sig["chains"] = [_chain_sig(c, files, depth + 1) for c in get(device, "chains", None) or []]
+
+
+def _chain_sig(chain, files, depth):
+    devs = []
+    for d in get(chain, "devices", None) or []:
+        sig = device_signature(d, files, depth)
+        sig["p"] = read_params(d)
+        devs.append(sig)
+    return {"name": str(get(chain, "name", "")), "devices": devs}
 
 
 def same_device(a, b):
@@ -284,8 +334,12 @@ def same_device(a, b):
     return a.get("cls") == b.get("cls") and a.get("display") == b.get("display")
 
 
-def read_device_chain(track):
-    return [device_signature(d) for d in syncable_devices(track)]
+def read_device_chain(track, files=None):
+    """Returns None while a sample inside a device is still being hashed."""
+    try:
+        return [device_signature(d, files) for d in syncable_devices(track)]
+    except _HashPending:
+        return None
 
 
 def read_params(device):
@@ -352,7 +406,25 @@ class DeviceLoader(object):
                 return item
         return None
 
+    def find_preset(self, sig):
+        """A rack/Simpler saved as a preset (e.g. "808 Core Kit") loads with all its
+        sounds in one go, if the partner has the same preset in their browser."""
+        name = (sig.get("name") or "").lower()
+        if not name or name == (sig.get("display") or "").lower():
+            return None
+        if self._index is None:
+            self._build_index()
+        for attr in ("drums", "instruments", "audio_effects", "midi_effects"):
+            item = self._index.get((attr, name))
+            if item is not None:
+                return item
+        return None
+
     def load(self, track, sig):
+        preset = self.find_preset(sig) if ("pads" in sig or "chains" in sig or "file" in sig) else None
+        if preset is not None:
+            self._load_item(track, preset)
+            return
         # Live 12.1+ can insert native devices directly by name.
         if has(track, "insert_device") and sig.get("cls") not in PLUGIN_CLASSES and not sig.get("cls", "").startswith("Mx"):
             try:
@@ -363,6 +435,9 @@ class DeviceLoader(object):
         item = self.find(sig)
         if item is None:
             raise MissingItem(sig.get("plugin") or sig.get("display") or sig.get("name"))
+        self._load_item(track, item)
+
+    def _load_item(self, track, item):
         browser = self._browser_fn()
         view = self._song.view
         view.selected_track = track
@@ -375,9 +450,11 @@ class DeviceLoader(object):
         browser.load_item(item)
 
 
-def write_device_chain(track, target, loader):
-    """Make the track's device chain match `target`. Returns list of missing item names."""
+def write_device_chain(track, target, loader, files=None, issues=None):
+    """Make the track's device chain match `target`. Returns list of missing item names.
+    Things this Live version can't do are appended to `issues`."""
     missing = []
+    issues = issues if issues is not None else []
     current = syncable_devices(track)
     cur_sigs = [device_signature(d) for d in current]
     keep = 0
@@ -393,14 +470,110 @@ def write_device_chain(track, target, loader):
         except MissingItem as e:
             missing.append(str(e))
             break  # later devices would end up at the wrong index
-    # Restore user-given device names.
+    # Restore user-given device names, then fill in samples/pads/chains.
     for dev, sig in zip(syncable_devices(track), target):
-        if same_device(device_signature(dev), sig) and str(dev.name) != sig.get("name") and sig.get("cls") not in PLUGIN_CLASSES:
+        if not same_device(device_signature(dev), sig):
+            continue
+        if str(dev.name) != sig.get("name") and sig.get("cls") not in PLUGIN_CLASSES:
             try:
                 dev.name = sig["name"]
             except Exception:
                 pass
+        if files is not None:
+            write_device_content(dev, sig, files, missing, issues)
     return missing
+
+
+def write_device_content(dev, sig, files, missing, issues):
+    if sig.get("file", {}).get("hash"):
+        _write_sample(dev, sig["file"], files, missing, issues)
+    if "pads" in sig:
+        _write_pads(dev, sig["pads"], files, missing, issues)
+    elif "chains" in sig:
+        chains = list(get(dev, "chains", None) or [])
+        for chain, csig in zip(chains, sig["chains"]):
+            _write_chain_devices(chain, csig.get("devices") or [], files, missing, issues)
+        if len(sig["chains"]) > len(chains):
+            issues.append("adding chains to a Rack")
+
+
+def _write_sample(dev, info, files, missing, issues):
+    want = info["hash"]
+    cur_path = _sample_path(dev)
+    if cur_path:
+        cur = files.fingerprint(cur_path)
+        if cur is not None and cur.get("hash") == want:
+            return
+        if cur is None and os.path.basename(cur_path) == info.get("name"):
+            return  # still hashing; almost certainly the same file
+    path = files.path_for(want)
+    if not path:
+        missing.append(info.get("name") or "a sample")
+        return
+    if not has(dev, "replace_sample"):
+        issues.append("loading samples into Simpler (needs Live 12)")
+        return
+    dev.replace_sample(path)
+
+
+def _write_pads(rack, pads, files, missing, issues):
+    want = dict((int(note), chains) for note, chains in pads)
+    for pad in list(get(rack, "drum_pads", None) or []):
+        note = int(pad.note)
+        chains = list(get(pad, "chains", None) or [])
+        target = want.get(note)
+        if not target:
+            if chains and has(pad, "delete_all_chains"):
+                pad.delete_all_chains()
+            continue
+        if not chains:
+            chain = _new_drum_chain(rack, note)
+            if chain is None:
+                issues.append("adding sounds to empty Drum Rack pads (needs Live 12.3)")
+                continue
+            chains = [chain]
+        _write_chain_devices(chains[0], target[0].get("devices") or [], files, missing, issues)
+
+
+def _new_drum_chain(rack, note):
+    if not has(rack, "insert_chain"):
+        return None
+    try:
+        rack.insert_chain(len(list(rack.chains)))
+        chain = list(rack.chains)[-1]
+        chain.in_note = note
+        return chain
+    except Exception:
+        return None
+
+
+def _write_chain_devices(chain, target, files, missing, issues):
+    current = list(get(chain, "devices", None) or [])
+    keep = 0
+    while keep < len(current) and keep < len(target) and same_device(device_signature(current[keep]), target[keep]):
+        keep += 1
+    if keep < len(current) or keep < len(target):
+        if not (has(chain, "delete_device") and has(chain, "insert_device")):
+            issues.append("changing devices inside a Rack (needs Live 12.1)")
+            target = target[:keep]
+        else:
+            for i in reversed(range(keep, len(current))):
+                chain.delete_device(i)
+            for i, sig in enumerate(target[keep:]):
+                if sig.get("cls") in PLUGIN_CLASSES or sig.get("cls", "").startswith("Mx"):
+                    issues.append("plug-ins inside a Rack")
+                    target = target[:keep + i]
+                    break
+                try:
+                    chain.insert_device(sig.get("display") or sig.get("name"), keep + i)
+                except Exception:
+                    missing.append(sig.get("display") or sig.get("name"))
+                    target = target[:keep + i]
+                    break
+    for dev, sig in zip(list(get(chain, "devices", None) or []), target):
+        write_device_content(dev, sig, files, missing, issues)
+        if "p" in sig:
+            write_params(dev, sig["p"])
 
 
 # ---------------------------------------------------------------------------
