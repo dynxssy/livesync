@@ -3,7 +3,33 @@
 $ErrorActionPreference = "Stop"
 $Repo = "dynxssy/livesync"
 $Server = if ($env:LIVESYNC_SERVER) { $env:LIVESYNC_SERVER } else { "wss://livesync-relay.onrender.com" }
-$UL = if ($env:LIVESYNC_USER_LIBRARY) { $env:LIVESYNC_USER_LIBRARY } else { Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Ableton\User Library" }
+function Find-UserLibrary {
+  if ($env:LIVESYNC_USER_LIBRARY) { return $env:LIVESYNC_USER_LIBRARY }
+  $cands = @()
+  # 1. Where Live itself says the User Library is (Library.cfg in Live's preferences).
+  $prefs = Join-Path $env:APPDATA "Ableton"
+  if (Test-Path $prefs) {
+    Get-ChildItem $prefs -Recurse -Filter "Library.cfg" -ErrorAction SilentlyContinue |
+      Sort-Object LastWriteTime -Descending | ForEach-Object {
+        $txt = Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue
+        foreach ($m in [regex]::Matches($txt, 'Value="([^"]*User Library[^"]*)"')) {
+          $cands += $m.Groups[1].Value.TrimEnd('\')
+        }
+      }
+  }
+  # 2. The usual places (including OneDrive-redirected Documents).
+  $cands += Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Ableton\User Library"
+  $cands += Join-Path $env:USERPROFILE "Documents\Ableton\User Library"
+  if ($env:OneDrive) { $cands += Join-Path $env:OneDrive "Documents\Ableton\User Library" }
+  foreach ($c in $cands) { if ($c -and (Test-Path $c)) { return $c } }
+  # 3. Live hasn't created one yet: make the default one.
+  $def = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Ableton\User Library"
+  New-Item -ItemType Directory -Force -Path $def | Out-Null
+  Write-Host "No Ableton User Library found, created $def"
+  return $def
+}
+$UL = Find-UserLibrary
+Write-Host "Using Ableton User Library: $UL"
 $Tmp = Join-Path $env:TEMP ("livesync-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $Tmp | Out-Null
 Write-Host "Downloading LiveSync..."
@@ -11,7 +37,6 @@ Write-Host "Downloading LiveSync..."
 Invoke-WebRequest "https://codeload.github.com/$Repo/zip/main" -OutFile "$Tmp\ls.zip" -UseBasicParsing
 Expand-Archive "$Tmp\ls.zip" -DestinationPath $Tmp
 $Src = Get-ChildItem $Tmp -Directory | Select-Object -First 1
-if (-not (Test-Path $UL)) { Write-Host "Ableton User Library not found at $UL. Set LIVESYNC_USER_LIBRARY and run again."; exit 1 }
 $RS = Join-Path $UL "Remote Scripts\LiveSync"
 if (Test-Path $RS) { Remove-Item $RS -Recurse -Force }
 New-Item -ItemType Directory -Force -Path (Join-Path $UL "Presets\Audio Effects\Max Audio Effect") | Out-Null
