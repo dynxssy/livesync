@@ -51,6 +51,25 @@ Both of you must use the same server. Pick one:
 
 ### 2. Install LiveSync on each computer
 
+**One line (recommended).** macOS Terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dynxssy/livesync/main/install.sh | bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/dynxssy/livesync/main/install.ps1 | iex
+```
+
+These download LiveSync, install it into your User Library, and set the relay address
+(`wss://livesync-relay.onrender.com`; override with `LIVESYNC_SERVER=...`). They need the repo
+to be public. For a private repo, use the `gh` command in the header of `install.sh`.
+
+**Or from a downloaded copy:**
+
+
 * **macOS:** double-click `installer/install-mac.command`.
 * **Windows:** double-click `installer\install-windows.bat`.
 
