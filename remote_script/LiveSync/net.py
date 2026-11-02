@@ -40,6 +40,23 @@ class HandshakeError(Exception):
     pass
 
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _tls_context():
+    """Live's bundled Python on macOS ships without trusted root certificates,
+    so also load the system bundle and the Mozilla bundle shipped with LiveSync
+    (cacert.pem, from the certifi project)."""
+    ctx = ssl.create_default_context()
+    for path in (os.path.join(_HERE, "cacert.pem"), "/etc/ssl/cert.pem", "/private/etc/ssl/cert.pem"):
+        if os.path.exists(path):
+            try:
+                ctx.load_verify_locations(cafile=path)
+            except Exception:
+                pass
+    return ctx
+
+
 def _apply_mask(payload, mask):
     """XOR payload with the 4-byte mask using big-int math (fast in pure Python)."""
     n = len(payload)
@@ -67,7 +84,7 @@ class WebSocketConnection(object):
             if ssl is None:
                 raw.close()
                 raise HandshakeError("This copy of Live can't make secure (wss://) connections. Use a ws:// server address.")
-            ctx = ssl.create_default_context()
+            ctx = _tls_context()
             self.sock = ctx.wrap_socket(raw, server_hostname=self.host)
         else:
             self.sock = raw
