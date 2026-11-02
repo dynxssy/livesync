@@ -15,7 +15,7 @@ from .net import NetworkClient
 from .settings import Settings
 from .ui import Panel
 
-VERSION = "0.1.0"
+VERSION = "0.1.2"
 
 
 class LiveApi(object):
@@ -102,11 +102,17 @@ class LiveSyncSurface(object):
         if self.engine is None:
             return
         try:
+            self.panel.pump()
             for cmd in self.panel.poll_commands():
                 self.engine.handle_command(cmd)
             self.engine.tick()
+            self.panel.pump()
         except Exception:
             self.log("tick failed:\n" + traceback.format_exc())
+        # Live's Python only lets background threads (network, audio file
+        # hashing/transfer) run while the main thread is idle in Python, so
+        # hand them a few milliseconds every tick.
+        time.sleep(0.004)
 
     def disconnect(self):
         try:

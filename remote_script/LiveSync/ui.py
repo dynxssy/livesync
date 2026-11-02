@@ -13,6 +13,7 @@ from __future__ import absolute_import, print_function, unicode_literals
 
 import json
 import os
+import select
 import threading
 import time
 
@@ -162,9 +163,13 @@ class Panel(object):
                 except Exception:
                     self._send(400, "{}")
 
-        class Server(ThreadingMixIn, HTTPServer):
-            daemon_threads = True
+        # Served from Live's main thread (see pump): Live's embedded Python
+        # barely schedules background threads, so a threaded server stalls.
+        Handler.timeout = 0.3
+
+        class Server(HTTPServer):
             allow_reuse_address = True
+            timeout = 0
 
         for port in (self.port, self.port + 1, self.port + 2):
             try:
@@ -175,15 +180,29 @@ class Panel(object):
                 self._log("panel port %d busy: %r" % (port, e))
         if self._httpd is None:
             return False
-        t = threading.Thread(target=self._httpd.serve_forever, name="LiveSyncPanel")
-        t.daemon = True
-        t.start()
+        self._httpd.socket.setblocking(False)
         return True
+
+    def pump(self, budget=0.015):
+        """Answer pending panel requests. Called on every Live tick."""
+        if self._httpd is None:
+            return
+        end = time.time() + budget
+        while time.time() < end:
+            try:
+                ready, _, _ = select.select([self._httpd.socket], [], [], 0)
+            except Exception:
+                return
+            if not ready:
+                return
+            try:
+                self._httpd._handle_request_noblock()
+            except Exception:
+                pass
 
     def stop(self):
         if self._httpd is not None:
             try:
-                self._httpd.shutdown()
                 self._httpd.server_close()
             except Exception:
                 pass
