@@ -1,0 +1,13 @@
+# Render Blueprint: New > Blueprint > pick this repo. Free plan works (the relay
+# sleeps after ~15 idle minutes and wakes when someone connects).
+services:
+  - type: web
+    name: livesync-relay
+    runtime: docker
+    rootDir: server
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATA_DIR
+        value: /tmp/livesync

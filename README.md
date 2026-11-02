@@ -46,7 +46,7 @@ Both of you must use the same server. Pick one:
   address is the same with `wss://`: `wss://something.trycloudflare.com`. It changes every time
   you restart the tunnel.
 * **Permanent:** deploy `server/` to any host that runs Docker and WebSockets. Fly.io
-  (`server/fly.toml`) and Render (`server/render.yaml`) configs are included. Your address
+  (`server/fly.toml`) and Render (`render.yaml`, free plan) configs are included. Your address
   is then `wss://<your-app>.fly.dev` or `wss://<your-app>.onrender.com`.
 
 ### 2. Install LiveSync on each computer
