@@ -57,10 +57,10 @@ Both of you must use the same server. Pick one:
 curl -fsSL https://raw.githubusercontent.com/dynxssy/livesync/main/install.sh | bash
 ```
 
-Windows PowerShell:
+Windows (paste into Command Prompt or PowerShell):
 
-```powershell
-irm https://raw.githubusercontent.com/dynxssy/livesync/main/install.ps1 | iex
+```
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/dynxssy/livesync/main/install.ps1 | iex"
 ```
 
 These download LiveSync, install it into your User Library, and set the relay address
